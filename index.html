@@ -823,47 +823,67 @@
                 btn.disabled = true;
             }
             
-            // PWA 模式下，使用更簡單的選項，避免超時問題
+            // 重要：在 iOS PWA 中，有時需要先 alert 一下才能讓 system dialog 出現（某些舊版 iOS）
+            // 或者純粹用來除錯確認按鈕有反應
+            // alert("正在請求定位權限..."); 
+
             const options = {
                 enableHighAccuracy: true,
-                timeout: isPWA() ? 20000 : 10000, // PWA 模式下給更長的超時時間
+                timeout: 10000,
                 maximumAge: 0
             };
             
-            // 先使用 getCurrentPosition 觸發權限請求
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    userLat = pos.coords.latitude;
-                    userLng = pos.coords.longitude;
-                    updateDistances();
-                    
-                    // 成功取得權限後，啟動持續追蹤
-                    initLocation(true);
-                },
-                (err) => {
-                    let msg = "無法取得定位";
-                    if (err.code === err.PERMISSION_DENIED) {
-                        if (isPWA()) {
-                            msg = "定位權限被拒絕\n\nPWA 模式下請檢查：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. 找到「YouBike」或此網站，確認權限設為「使用 App 期間」或「永遠」\n3. 如果曾經拒絕，請至「設定 > Safari > 進階 > 網站資料」清除此網站資料後重新開啟";
-                        } else {
-                            msg = "定位權限被拒絕\n\n請檢查以下設定：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. iOS「設定 > Safari > 位置」是否設為「詢問」或「允許」\n3. 如果曾經點選「拒絕」，請重新整理網頁會再次詢問（若未詢問請清除網站資料）";
-                        }
-                    } else if (err.code === err.TIMEOUT) {
-                        // 如果超時，嘗試一般精度
-                        console.log("getCurrentPosition timeout, trying low accuracy...");
-                        initLocation(false);
-                        return;
+            // 定義成功 callback
+            const successCallback = (pos) => {
+                // alert("定位成功！");
+                userLat = pos.coords.latitude;
+                userLng = pos.coords.longitude;
+                updateDistances();
+                initLocation(true);
+            };
+
+            // 定義失敗 callback
+            const errorCallback = (err) => {
+                // alert("定位錯誤代碼: " + err.code + "\n訊息: " + err.message);
+                
+                let msg = "無法取得定位";
+                if (err.code === err.PERMISSION_DENIED) {
+                    if (isPWA()) {
+                        msg = "定位權限被拒絕\n\n【iOS PWA 重要提示】\n如果這是您第一次安裝此 App：\n1. 請刪除此 App (從主畫面移除)\n2. 回到 Safari 開啟此網頁\n3. 在 Safari 中點擊「啟用定位」並選擇「允許」\n4. 再次「加入主畫面」\n\n(iOS PWA 必須繼承 Safari 的定位權限)";
+                    } else {
+                        msg = "定位權限被拒絕\n\n請檢查：\n1. iOS「設定 > 隱私權 > 定位服務」開啟\n2. iOS「設定 > Safari > 位置」設為「詢問」或「允許」";
                     }
-                    
+                } else if (err.code === err.TIMEOUT) {
+                    // 再次嘗試（一般精度）
+                    console.log("Timeout, retrying with low accuracy...");
+                    navigator.geolocation.getCurrentPosition(
+                        successCallback, 
+                        (err2) => {
+                            alert("定位逾時，請確認您在室外或有良好的 GPS 訊號");
+                            resetBtn();
+                        },
+                        { enableHighAccuracy: false, timeout: 10000 }
+                    );
+                    return;
+                } else {
+                    msg = "定位錯誤: " + err.message;
+                }
+                
+                if (err.code !== err.TIMEOUT) {
                     alert(msg);
-                    
-                    if (btn) {
-                        btn.innerHTML = '<i class="fa-solid fa-location-crosshairs me-1"></i>啟用定位';
-                        btn.disabled = false;
-                    }
-                },
-                options
-            );
+                    resetBtn();
+                }
+            };
+
+            const resetBtn = () => {
+                if (btn) {
+                    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs me-1"></i>啟用定位';
+                    btn.disabled = false;
+                }
+            };
+
+            // 先使用 getCurrentPosition 觸發權限請求
+            navigator.geolocation.getCurrentPosition(successCallback, errorCallback, options);
         }
 
         function getDistance(lat1, lon1, lat2, lon2) {
