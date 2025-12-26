@@ -320,7 +320,7 @@
     <div class="app-container">
         <div class="header">
             <h5 class="m-0 fw-bold"><i class="fa-solid fa-bicycle text-warning me-2"></i>高雄 YouBike 2.0</h5>
-            <button id="location-btn" class="btn btn-sm btn-outline-primary" onclick="requestLocationPermission()">
+            <button id="location-btn" class="btn btn-sm btn-outline-primary" onclick="requestLocationPermission(event)">
                 <i class="fa-solid fa-location-crosshairs me-1"></i>啟用定位
             </button>
         </div>
@@ -737,10 +737,12 @@
             // 2.5 更新 FAB 顯示狀態 (地圖頁隱藏，避免擋住右下角定位)
             updateRefreshFabVisibility();
 
-            // 2.6 iOS 相容：切換到地圖時自動請求定位（如果還沒請求過）
-            if (tab === 'map' && !locationRequested && navigator.geolocation) {
-                requestLocationPermission();
-            }
+            // 2.6 iOS PWA 相容：切換到地圖時不自動請求定位
+            // 在 PWA 模式下，定位權限必須在真正的用戶交互事件中觸發
+            // 所以這裡不自動觸發，用戶需要主動點擊「啟用定位」按鈕
+            // if (tab === 'map' && !locationRequested && navigator.geolocation) {
+            //     requestLocationPermission();
+            // }
 
             // 3. 特殊處理：如果是地圖模式，需要 resize 並載入
             if (tab === 'map') {
@@ -795,8 +797,21 @@
             updateDistances();
         }
 
-        // 手動請求定位權限（iOS 相容）
-        window.requestLocationPermission = function() {
+        // 檢測是否在 PWA 模式下運行
+        function isPWA() {
+            return (window.matchMedia('(display-mode: standalone)').matches) ||
+                   (window.navigator.standalone === true) ||
+                   (document.referrer.includes('android-app://'));
+        }
+
+        // 手動請求定位權限（iOS PWA 相容）
+        window.requestLocationPermission = function(event) {
+            // 在 PWA 模式下，確保這是真正的用戶交互事件
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            
             if (!navigator.geolocation) {
                 alert("您的瀏覽器不支援定位功能");
                 return;
@@ -808,16 +823,31 @@
                 btn.disabled = true;
             }
             
+            // PWA 模式下，使用更簡單的選項，避免超時問題
+            const options = {
+                enableHighAccuracy: true,
+                timeout: isPWA() ? 20000 : 10000, // PWA 模式下給更長的超時時間
+                maximumAge: 0
+            };
+            
             // 先使用 getCurrentPosition 觸發權限請求
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
+                    userLat = pos.coords.latitude;
+                    userLng = pos.coords.longitude;
+                    updateDistances();
+                    
                     // 成功取得權限後，啟動持續追蹤
                     initLocation(true);
                 },
                 (err) => {
                     let msg = "無法取得定位";
                     if (err.code === err.PERMISSION_DENIED) {
-                        msg = "定位權限被拒絕\n\n請檢查以下設定：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. iOS「設定 > Safari > 位置」是否設為「詢問」或「允許」\n3. 如果曾經點選「拒絕」，請重新整理網頁會再次詢問（若未詢問請清除網站資料）";
+                        if (isPWA()) {
+                            msg = "定位權限被拒絕\n\nPWA 模式下請檢查：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. 找到「YouBike」或此網站，確認權限設為「使用 App 期間」或「永遠」\n3. 如果曾經拒絕，請至「設定 > Safari > 進階 > 網站資料」清除此網站資料後重新開啟";
+                        } else {
+                            msg = "定位權限被拒絕\n\n請檢查以下設定：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. iOS「設定 > Safari > 位置」是否設為「詢問」或「允許」\n3. 如果曾經點選「拒絕」，請重新整理網頁會再次詢問（若未詢問請清除網站資料）";
+                        }
                     } else if (err.code === err.TIMEOUT) {
                         // 如果超時，嘗試一般精度
                         console.log("getCurrentPosition timeout, trying low accuracy...");
@@ -832,11 +862,7 @@
                         btn.disabled = false;
                     }
                 },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                }
+                options
             );
         }
 
