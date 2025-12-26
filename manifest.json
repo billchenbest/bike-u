@@ -8,14 +8,19 @@
     "orientation": "portrait-primary",
     "icons": [
         {
-            "src": "https://cdn-icons-png.flaticon.com/512/3711/3711261.png",
+            "src": "./1024x1024.jpg",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/jpeg"
         },
         {
-            "src": "https://cdn-icons-png.flaticon.com/512/3711/3711261.png",
+            "src": "./1024x1024.jpg",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/jpeg"
+        },
+        {
+            "src": "./1024x1024.jpg",
+            "sizes": "1024x1024",
+            "type": "image/jpeg"
         }
     ]
 }
