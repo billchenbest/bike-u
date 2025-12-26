@@ -849,7 +849,7 @@
                 let msg = "無法取得定位";
                 if (err.code === err.PERMISSION_DENIED) {
                     if (isPWA()) {
-                        msg = "定位權限被拒絕\n\n【iOS PWA 重要提示】\n如果這是您第一次安裝此 App：\n1. 請刪除此 App (從主畫面移除)\n2. 回到 Safari 開啟此網頁\n3. 在 Safari 中點擊「啟用定位」並選擇「允許」\n4. 再次「加入主畫面」\n\n(iOS PWA 必須繼承 Safari 的定位權限)";
+                        msg = "定位權限被拒絕\n\n【iOS PWA 限制說明】\n由於 iOS 系統限制，PWA 模式無法彈出權限視窗，且無法使用「僅允許一次」的權限。\n\n解決方案：\n1. 請刪除此 App\n2. 回到 Safari 開啟\n3. 啟用定位並選擇「使用 App 期間允許」(不能選僅一次)\n4. 再次加入主畫面\n\n若只想「僅允許一次」，請直接使用 Safari 瀏覽器即可，不要加入主畫面。";
                     } else {
                         msg = "定位權限被拒絕\n\n請檢查：\n1. iOS「設定 > 隱私權 > 定位服務」開啟\n2. iOS「設定 > Safari > 位置」設為「詢問」或「允許」";
                     }
