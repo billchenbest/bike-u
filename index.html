@@ -384,7 +384,14 @@
             // 在首次用戶交互時請求定位（點擊、觸摸等）
             const requestLocationOnInteraction = () => {
                 if (!locationRequested) {
-                    initLocation();
+                    // 改為呼叫 requestLocationPermission 以確保流程一致
+                    // 但為了避免干擾，這裡不自動彈 alert，所以直接 call initLocation
+                    // 或者更好的方式：如果用戶是點擊「啟用定位」按鈕，已經被上面的 handler 處理
+                    // 這裡主要是處理「點擊頁面其他地方」是否要嘗試定位？
+                    // 為了避免被拒絕後一直重試，這裡只做一次嘗試
+                    
+                    // 策略調整：交互時不自動定位，只依賴用戶主動點擊按鈕或切換 Tab
+                    // 這樣可以避免意外的權限請求導致被拒絕
                     locationRequested = true;
                 }
             };
@@ -395,55 +402,69 @@
         });
 
         // --- 定位邏輯 (高精確度版，iOS 相容) ---
-        function initLocation() {
-            if (!navigator.geolocation) {
-                console.warn("此瀏覽器不支援定位功能");
-                return;
-            }
+        function initLocation(highAccuracy = true) {
+            if (!navigator.geolocation) return;
             
             // 如果已經有 watchPosition 在運行，先清除
             if (locationWatchId !== null) {
                 navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
             }
             
-            // 使用 watchPosition 持續追蹤，精確度較高
+            const options = {
+                enableHighAccuracy: highAccuracy,
+                timeout: highAccuracy ? 10000 : 20000,
+                maximumAge: 0
+            };
+
+            // 使用 watchPosition 持續追蹤
             locationWatchId = navigator.geolocation.watchPosition(
                 (pos) => {
                     userLat = pos.coords.latitude;
                     userLng = pos.coords.longitude;
                     const accuracy = pos.coords.accuracy;
-                    console.log(`定位更新: ${userLat}, ${userLng} (誤差 ${accuracy}m)`);
+                    console.log(`定位更新 (${highAccuracy ? '高' : '一般'}): ${userLat}, ${userLng} (誤差 ${accuracy}m)`);
                     
-                    // 更新列表距離
                     updateDistances();
-                    // 如果地圖已開啟，更新地圖上的藍點
                     if (map) updateUserMarker(accuracy);
+                    
+                    // 成功後更新按鈕狀態
+                    const btn = document.getElementById('location-btn');
+                    if (btn && !btn.classList.contains('btn-success')) {
+                        btn.innerHTML = '<i class="fa-solid fa-location-dot me-1"></i>定位中';
+                        btn.classList.remove('btn-outline-primary');
+                        btn.classList.add('btn-success');
+                        setTimeout(() => {
+                            btn.style.opacity = '0.6';
+                            btn.style.pointerEvents = 'none';
+                        }, 3000);
+                    }
                 },
                 (err) => {
-                    let errorMsg = "定位失敗，使用預設座標";
-                    switch(err.code) {
-                        case err.PERMISSION_DENIED:
-                            errorMsg = "定位權限被拒絕，請在設定中允許定位權限";
-                            break;
-                        case err.POSITION_UNAVAILABLE:
-                            errorMsg = "無法取得定位資訊";
-                            break;
-                        case err.TIMEOUT:
-                            errorMsg = "定位請求逾時";
-                            break;
+                    // 降級策略：如果高精確度失敗，嘗試一般精確度
+                    if (highAccuracy && (err.code === err.TIMEOUT || err.code === err.POSITION_UNAVAILABLE)) {
+                        console.warn("高精確度定位失敗，切換至一般模式...", err);
+                        initLocation(false);
+                        return;
                     }
-                    console.warn(errorMsg, err);
-                    // 在 iOS 上，如果用戶拒絕，可以顯示提示
+
+                    let errorMsg = "定位失敗";
+                    // 只有在明確被拒絕時才彈出 Alert，避免干擾
                     if (err.code === err.PERMISSION_DENIED) {
-                        // 可以選擇顯示一個提示訊息給用戶
-                        // alert("請允許定位權限以使用附近站點功能");
+                        // 注意：watchPosition 的錯誤通常不彈 alert 避免無限迴圈，除非是手動觸發的流程
+                        // 這裡只做 console log，權限錯誤主要由 requestLocationPermission 處理
+                        console.warn("定位權限被拒絕");
+                    } else {
+                        console.warn("定位錯誤:", err.message);
+                    }
+                    
+                    const btn = document.getElementById('location-btn');
+                    if (btn && !btn.classList.contains('btn-success')) {
+                        btn.innerHTML = '<i class="fa-solid fa-location-crosshairs me-1"></i>啟用定位';
+                        btn.disabled = false;
                     }
                 },
-                {
-                    enableHighAccuracy: true, // ★ 重要：開啟 GPS 高精確度
-                    timeout: 15000, // iOS 可能需要更長的時間
-                    maximumAge: 0
-                }
+                options
             );
         }
 
@@ -775,29 +796,20 @@
             // 先使用 getCurrentPosition 觸發權限請求
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
-                    userLat = pos.coords.latitude;
-                    userLng = pos.coords.longitude;
-                    updateDistances();
-                    
-                    // 成功後啟動持續追蹤
-                    initLocation();
-                    
-                    if (btn) {
-                        btn.innerHTML = '<i class="fa-solid fa-location-dot me-1"></i>定位中';
-                        btn.classList.remove('btn-outline-primary');
-                        btn.classList.add('btn-success');
-                        // 3 秒後隱藏按鈕（定位已成功）
-                        setTimeout(() => {
-                            btn.style.opacity = '0.6';
-                            btn.style.pointerEvents = 'none';
-                        }, 3000);
-                    }
+                    // 成功取得權限後，啟動持續追蹤
+                    initLocation(true);
                 },
                 (err) => {
                     let msg = "無法取得定位";
                     if (err.code === err.PERMISSION_DENIED) {
-                        msg = "定位權限被拒絕\n\n請在瀏覽器設定中允許定位權限：\n設定 > Safari > 定位服務";
+                        msg = "定位權限被拒絕\n\n請檢查以下設定：\n1. iOS「設定 > 隱私權 > 定位服務」是否開啟\n2. iOS「設定 > Safari > 位置」是否設為「詢問」或「允許」\n3. 如果曾經點選「拒絕」，請重新整理網頁會再次詢問（若未詢問請清除網站資料）";
+                    } else if (err.code === err.TIMEOUT) {
+                        // 如果超時，嘗試一般精度
+                        console.log("getCurrentPosition timeout, trying low accuracy...");
+                        initLocation(false);
+                        return;
                     }
+                    
                     alert(msg);
                     
                     if (btn) {
@@ -807,7 +819,7 @@
                 },
                 {
                     enableHighAccuracy: true,
-                    timeout: 15000,
+                    timeout: 10000,
                     maximumAge: 0
                 }
             );
