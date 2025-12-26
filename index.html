@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>高雄 YouBike 2.0</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#ffffff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        :root {
+            --yb-yellow: #F3C800;
+            --yb-dark: #2D3436;
+            --bg-color: #F2F4F8;
+            --card-radius: 20px;
+            --nav-height: 90px;
+        }
+
+        body { 
+            background-color: var(--bg-color); 
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; 
+            margin: 0;
+            overflow: hidden; /* 防止整體捲動，讓各頁面自己捲動 */
+            color: var(--yb-dark);
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 全版面容器 */
+        .app-container {
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 內容顯示區 (可捲動) */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+            padding-bottom: calc(var(--nav-height) + 20px);
+            background: var(--bg-color);
+            display: none; /* 預設隱藏，透過 JS 切換 */
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .content-area.active { display: block; }
+
+        /* 特殊處理：地圖區塊不需要 padding-bottom */
+        #view-map.content-area { padding-bottom: 0; overflow: hidden; }
+
+        /* 頂部標題列 (固定) */
+        .header { 
+            background: rgba(255, 255, 255, 0.9); 
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 12px; 
+            text-align: center; 
+            z-index: 1000; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03); 
+            position: relative;
+        }
+
+        /* 列表樣式 */
+        .section-title {
+            padding: 20px 20px 10px;
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #888;
+            display: flex;
+            align-items: center;
+        }
+        
+        .list-container { padding: 0 16px; }
+
+        .yb-card {
+            background: #fff;
+            border-radius: var(--card-radius);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            padding: 16px;
+            margin-bottom: 12px;
+            position: relative;
+        }
+
+        /* 卡片內容 */
+        .st-name { font-size: 1rem; font-weight: 700; margin-bottom: 4px; color: #333; }
+        .st-meta { font-size: 0.8rem; color: #999; margin-bottom: 12px; }
+        .badge-row { display: flex; gap: 8px; }
+        .yb-badge {
+            flex: 1;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 8px;
+            text-align: center;
+        }
+        .yb-badge.yellow { background: rgba(243, 200, 0, 0.15); }
+        .num { font-size: 1.2rem; font-weight: 800; line-height: 1; }
+        .lbl { font-size: 0.7rem; color: #666; margin-top: 4px; }
+
+        /* 釘選按鈕 */
+        .pin-btn {
+            position: absolute;
+            top: 15px; right: 15px;
+            background: none; border: none;
+            font-size: 1.4rem; color: #eee;
+            padding: 5px;
+        }
+        .pin-btn.active { color: var(--yb-yellow); }
+
+        /* --- 地圖樣式 --- */
+        #map { width: 100%; height: 100%; z-index: 1; }
+        
+        /* 地圖上的標記樣式 (CSS Marker) */
+        .map-marker {
+            background: #fff;
+            border: 3px solid #666;
+            border-radius: 50%;
+            text-align: center;
+            width: 36px;
+            height: 36px;
+            line-height: 30px;
+            font-weight: bold;
+            font-size: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            color: #333;
+            box-sizing: border-box;
+        }
+        .marker-green { border-color: #2ecc71; color: #2ecc71; }
+        .marker-orange { border-color: #f39c12; color: #f39c12; }
+        .marker-red { border-color: #e74c3c; color: #e74c3c; background: #ffebeb; }
+
+        /* 有電輔車的站點標記 */
+        .marker-ebike::after {
+            content: "⚡";
+            position: absolute;
+            right: -6px;
+            top: -8px;
+            font-size: 12px;
+            color: var(--yb-yellow);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+        }
+
+        /* 地圖重新定位按鈕 */
+        .map-recenter-btn {
+            position: absolute;
+            bottom: calc(var(--nav-height) + 20px);
+            right: 20px;
+            width: 44px; height: 44px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 900;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem; color: #333;
+        }
+
+        /* --- 底部導覽列 (完全仿照 Lexus index 的液態玻璃高光) --- */
+        .nav-bottom { 
+            position: fixed; 
+            bottom: calc(20px + env(safe-area-inset-bottom)); 
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 400px;
+            background: rgba(255, 255, 255, 0.5); 
+            backdrop-filter: blur(25px) saturate(200%);
+            -webkit-backdrop-filter: blur(25px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.6); 
+            display: flex; 
+            justify-content: space-around; 
+            padding: 15px 0; 
+            z-index: 2000; 
+            box-shadow: 
+                0 15px 35px rgba(0,0,0,0.1),
+                inset 0 1px 0 rgba(255,255,255,0.8);
+            border-radius: 50px;
+            isolation: isolate;
+            overflow: hidden;
+        }
+
+        /* iOS-like liquid glass highlight */
+        #nav-highlight {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 0;
+            width: 0;
+            border-radius: 999px;
+            pointer-events: none;
+            z-index: 0;
+
+            background: rgba(255, 255, 255, 0.22);
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            box-shadow:
+                0 10px 25px rgba(0,0,0,0.12),
+                inset 0 1px 0 rgba(255,255,255,0.65);
+            backdrop-filter: blur(22px) saturate(180%);
+            -webkit-backdrop-filter: blur(22px) saturate(180%);
+
+            will-change: left, top, width, height;
+
+            transition:
+                left 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+                top 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+                width 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+                height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        #nav-highlight::before {
+            content: "";
+            position: absolute;
+            inset: 2px;
+            border-radius: inherit;
+            background:
+                radial-gradient(120% 160% at 28% 18%, rgba(255,255,255,0.65), rgba(255,255,255,0) 60%),
+                radial-gradient(120% 160% at 72% 85%, rgba(243,200,0,0.18), rgba(243,200,0,0) 62%);
+            opacity: 0.95;
+        }
+        #nav-highlight::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            box-shadow:
+                inset 0 0 0 1px rgba(243,200,0,0.16),
+                inset 0 -10px 20px rgba(0,0,0,0.06);
+            opacity: 0.9;
+        }
+
+        /* 導覽按鈕 */
+        .nav-item {
+            text-align: center;
+            color: #aaa;
+            font-size: 0.75rem;
+            cursor: pointer;
+            flex: 1;
+            transition: all 0.3s;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .nav-item.active { color: var(--yb-dark); font-weight: 800; transform: translateY(-2px); }
+        .nav-item i { font-size: 1.5rem; display: block; margin-bottom: 6px; }
+        
+        /* 更新按鈕 (懸浮於列表頁) */
+        .fab-container {
+            position: fixed;
+            bottom: calc(110px + env(safe-area-inset-bottom));
+            right: 24px;
+            z-index: 1500;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform: scale(1);
+        }
+        .fab-container.hide {
+            transform: scale(0);
+            pointer-events: none;
+        }
+        .fab-btn {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: var(--yb-dark);
+            color: var(--yb-yellow);
+            border: none;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            cursor: pointer;
+            transition: transform 0.2s, background-color 0.3s, box-shadow 0.3s;
+        }
+        .fab-btn:active { transform: scale(0.9); }
+
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        <div class="header">
+            <h5 class="m-0 fw-bold"><i class="fa-solid fa-bicycle text-warning me-2"></i>高雄 YouBike 2.0</h5>
+        </div>
+
+        <div id="view-home" class="content-area active">
+            <div class="section-title"><i class="fa-solid fa-star me-2 text-warning"></i>我的釘選</div>
+            <div class="list-container" id="pin-container">
+                <div class="text-center py-5 text-muted">尚無釘選資料</div>
+            </div>
+
+            <div class="section-title"><i class="fa-solid fa-location-dot me-2 text-warning"></i>附近站點</div>
+            <div class="list-container" id="list-container">
+                <div class="text-center py-5 text-muted">載入中...</div>
+            </div>
+
+        </div>
+
+        <div id="view-map" class="content-area">
+            <div id="map"></div>
+            <div class="map-recenter-btn" onclick="centerMapToUser()">
+                <i class="fa-solid fa-crosshairs"></i>
+            </div>
+        </div>
+    </div>
+
+    <div id="refresh-fab" class="fab-container" aria-label="更新資料">
+        <button class="fab-btn" onclick="fetchData(true)" aria-label="更新資料">
+            <i class="fa-solid fa-rotate-right" id="refresh-icon"></i>
+        </button>
+    </div>
+
+    <div class="nav-bottom">
+        <div id="nav-highlight" aria-hidden="true"></div>
+
+        <div class="nav-item active" onclick="switchTab('home')">
+            <i class="fa-solid fa-house"></i> 首頁
+        </div>
+        <div class="nav-item" onclick="switchTab('map')">
+            <i class="fa-solid fa-map"></i> 地圖
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // 設定
+        const PROXY_URL = "https://corsproxy.io/?";
+        const API_URL = "https://api.kcg.gov.tw/api/service/Get/b4dd9c40-9027-4125-8666-06bef1756092";
+        
+        // 狀態變數
+        let allStations = [];
+        let pinnedIds = JSON.parse(localStorage.getItem('yb_pinned_ids') || '[]');
+        let userLat = 22.618600; // 預設高雄
+        let userLng = 120.302500;
+        let map = null;
+        let markersGroup = null;
+        let userMarker = null;
+        let userAccuracyCircle = null;
+        let currentTab = 'home';
+
+        // PWA Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js');
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initLocation(); // 啟動定位
+            fetchData();    // 抓取資料
+            requestAnimationFrame(() => updateNavHighlight()); // 初始化導覽列高光
+            window.addEventListener('resize', () => updateNavHighlight());
+            updateRefreshFabVisibility();
+        });
+
+        // --- 定位邏輯 (高精確度版) ---
+        function initLocation() {
+            if (navigator.geolocation) {
+                // 使用 watchPosition 持續追蹤，精確度較高
+                navigator.geolocation.watchPosition(
+                    (pos) => {
+                        userLat = pos.coords.latitude;
+                        userLng = pos.coords.longitude;
+                        const accuracy = pos.coords.accuracy;
+                        console.log(`定位更新: ${userLat}, ${userLng} (誤差 ${accuracy}m)`);
+                        
+                        // 更新列表距離
+                        updateDistances();
+                        // 如果地圖已開啟，更新地圖上的藍點
+                        if (map) updateUserMarker(accuracy);
+                    },
+                    (err) => {
+                        console.warn("定位失敗/拒絕，使用預設座標", err);
+                    },
+                    {
+                        enableHighAccuracy: true, // ★ 重要：開啟 GPS 高精確度
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
+            }
+        }
+
+        // --- 資料處理 ---
+        async function fetchData(isManual = false) {
+            const icon = document.getElementById('refresh-icon');
+            if(isManual && icon) icon.classList.add('fa-spin');
+
+            try {
+                const res = await fetch(PROXY_URL + encodeURIComponent(API_URL));
+                const json = await res.json();
+                
+                // 解析資料 (容錯結構)
+                let rawData = [];
+                if (json.data && json.data.retVal) rawData = json.data.retVal;
+                else if (json.data && json.data.data && json.data.data.retVal) rawData = json.data.data.retVal;
+                else if (json.retVal) rawData = json.retVal;
+                else rawData = json;
+
+                // 轉換格式
+                allStations = rawData.map(s => ({
+                    ...s,
+                    lat: parseFloat(s.lat),
+                    lng: parseFloat(s.lng),
+                    sbi: parseInt(s.sbi),
+                    bemp: parseInt(s.bemp),
+                    yb2: parseInt((s.sbi_detail && s.sbi_detail.yb2) ?? s.yb2 ?? 0),
+                    eyb: parseInt((s.sbi_detail && s.sbi_detail.eyb) ?? s.eyb ?? 0),
+                    dist: 9999 // 初始距離
+                }));
+
+                updateDistances(); // 計算距離並渲染列表
+                
+                if (map) renderMapMarkers(); // 如果地圖已初始化，更新標記
+
+            } catch (e) {
+                alert("資料讀取失敗，請檢查網路");
+                console.error(e);
+            } finally {
+                if(isManual && icon) setTimeout(() => icon.classList.remove('fa-spin'), 500);
+            }
+        }
+
+        function updateDistances() {
+            // 重新計算距離並排序
+            allStations.forEach(s => {
+                s.dist = getDistance(userLat, userLng, s.lat, s.lng);
+            });
+            allStations.sort((a, b) => a.dist - b.dist);
+            
+            renderList();
+            renderPinned();
+        }
+
+        // --- 渲染 UI (列表) ---
+        function renderList() {
+            const container = document.getElementById('list-container');
+            let html = '';
+            // 顯示最近 30 筆
+            allStations.slice(0, 30).forEach(s => html += createCardHtml(s));
+            container.innerHTML = html || '<div class="text-center py-5">無資料</div>';
+        }
+
+        function renderPinned() {
+            const container = document.getElementById('pin-container');
+            const pinned = allStations.filter(s => pinnedIds.includes(s.sno));
+            let html = '';
+            pinned.forEach(s => html += createCardHtml(s));
+            container.innerHTML = html || '<div class="text-center py-5 text-muted">點擊星星即可釘選站點</div>';
+        }
+
+        function createCardHtml(s) {
+            const isPinned = pinnedIds.includes(s.sno);
+            const name = s.sna.replace('YouBike2.0_', '');
+            const dist = s.dist < 1 ? `${Math.round(s.dist*1000)}m` : `${s.dist.toFixed(1)}km`;
+            const bikeColor = s.sbi > 5 ? '#2ecc71' : (s.sbi > 0 ? '#f39c12' : '#e74c3c');
+            const ebikeColor = s.eyb > 0 ? 'var(--yb-yellow)' : '#bbb';
+            
+            return `
+            <div class="yb-card" onclick="focusOnMap(${s.lat}, ${s.lng})">
+                <div class="st-name text-truncate">${name}</div>
+                <div class="st-meta">
+                    <i class="fa-solid fa-location-arrow me-1"></i> ${dist}
+                    <span class="mx-2">|</span> ${s.ar}
+                </div>
+                <div class="badge-row">
+                    <div class="yb-badge yellow">
+                        <div class="num" style="color:${bikeColor}">${s.sbi}</div>
+                        <div class="lbl">可借</div>
+                    </div>
+                    <div class="yb-badge">
+                        <div class="num" style="color:${ebikeColor}">${s.eyb}</div>
+                        <div class="lbl"><i class="fa-solid fa-bolt"></i> 電輔</div>
+                    </div>
+                    <div class="yb-badge">
+                        <div class="num" style="color:#555">${s.bemp}</div>
+                        <div class="lbl">空位</div>
+                    </div>
+                </div>
+                <button class="pin-btn ${isPinned ? 'active' : ''}" onclick="event.stopPropagation(); togglePin('${s.sno}')">
+                    <i class="${isPinned ? 'fa-solid' : 'fa-regular'} fa-star"></i>
+                </button>
+            </div>`;
+        }
+
+        // --- 地圖邏輯 (Leaflet) ---
+        function initMap() {
+            if (map) return;
+            
+            map = L.map('map', { zoomControl: false }).setView([userLat, userLng], 15);
+            
+            // 使用 OpenStreetMap 圖資
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 19
+            }).addTo(map);
+
+            markersGroup = L.layerGroup().addTo(map);
+            
+            // 顯示使用者位置
+            updateUserMarker(50); // 初始誤差圈
+            renderMapMarkers();
+        }
+
+        function openStationPopup(latlng, station) {
+            if (!map) return;
+            const headerH = document.querySelector('.header')?.getBoundingClientRect().height || 0;
+            const navH = document.querySelector('.nav-bottom')?.getBoundingClientRect().height || 0;
+            
+            const isPinned = pinnedIds.includes(station.sno);
+            const starClass = isPinned ? 'fa-solid' : 'fa-regular';
+            const color = isPinned ? 'var(--yb-yellow)' : '#ccc';
+
+            const html = `
+                <div style="display:flex; align-items:flex-start; gap:10px; min-width:180px;">
+                    <div style="flex:1;">
+                        <div style="font-size:15px; font-weight:bold; margin-bottom:4px;">${station.sna.replace('YouBike2.0_', '')}</div>
+                        <div style="font-size:13px; color:#666; line-height:1.5;">
+                            可借: <b style="color:#333; font-size:14px;">${station.sbi}</b> (一般 ${station.yb2} / 電輔 ${station.eyb})<br>
+                            空位: ${station.bemp}
+                        </div>
+                    </div>
+                    <button onclick="togglePinFromPopup(this, '${station.sno}')" style="background:none; border:none; padding:4px; color:${color}; font-size:20px; cursor:pointer;">
+                        <i class="${starClass} fa-star"></i>
+                    </button>
+                </div>
+            `;
+
+            L.popup({
+                offset: L.point(0, -18),
+                autoPan: true,
+                autoPanPaddingTopLeft: L.point(10, Math.round(headerH + 12)),
+                autoPanPaddingBottomRight: L.point(10, Math.round(navH + 30))
+            })
+            .setLatLng(latlng)
+            .setContent(html)
+            .openOn(map);
+        }
+
+        window.togglePinFromPopup = function(btn, sno) {
+            togglePin(sno);
+            const isPinned = pinnedIds.includes(sno);
+            const icon = btn.querySelector('i');
+            if(isPinned) {
+                btn.style.color = 'var(--yb-yellow)';
+                icon.classList.replace('fa-regular', 'fa-solid');
+            } else {
+                btn.style.color = '#ccc';
+                icon.classList.replace('fa-solid', 'fa-regular');
+            }
+        }
+
+        function updateUserMarker(accuracy) {
+            if (!map) return;
+            
+            // 移除舊的
+            if (userMarker) {
+                map.removeLayer(userMarker);
+                if (userAccuracyCircle) map.removeLayer(userAccuracyCircle);
+            }
+
+            // 藍色圓點
+            userMarker = L.circleMarker([userLat, userLng], {
+                radius: 8,
+                fillColor: "#2196F3",
+                color: "#fff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 1
+            }).addTo(map);
+
+            // 誤差範圍圈 (半透明藍色)
+            userAccuracyCircle = L.circle([userLat, userLng], {
+                radius: accuracy,
+                fillColor: "#2196F3",
+                fillOpacity: 0.15,
+                stroke: false
+            }).addTo(map);
+        }
+
+        function renderMapMarkers() {
+            if (!map || !markersGroup) return;
+            markersGroup.clearLayers();
+
+            allStations.forEach(s => {
+                // 根據車輛數決定顏色
+                let colorClass = 'marker-green';
+                if (s.sbi === 0) colorClass = 'marker-red';
+                else if (s.sbi < 5) colorClass = 'marker-orange';
+
+                const ebikeClass = s.eyb > 0 ? 'marker-ebike' : '';
+
+                const icon = L.divIcon({
+                    className: `map-marker ${colorClass} ${ebikeClass}`,
+                    html: `<span>${s.sbi}</span>`,
+                    iconSize: [36, 36],
+                    iconAnchor: [18, 18]
+                });
+
+                const marker = L.marker([s.lat, s.lng], { icon: icon });
+                marker.on('click', (e) => openStationPopup(e.latlng, s));
+                
+                markersGroup.addLayer(marker);
+            });
+        }
+
+        function centerMapToUser() {
+            if(map) map.flyTo([userLat, userLng], 16);
+        }
+
+        function focusOnMap(lat, lng) {
+            // 從列表點擊跳轉到地圖的功能
+            switchTab('map');
+            setTimeout(() => {
+                map.flyTo([lat, lng], 18);
+            }, 300);
+        }
+
+
+        // --- UI 互動邏輯 ---
+        window.switchTab = function(tab) {
+            currentTab = tab;
+            
+            // 1. 切換內容顯示
+            document.querySelectorAll('.content-area').forEach(div => div.classList.remove('active'));
+            document.getElementById(`view-${tab}`).classList.add('active');
+
+            // 2. 切換導覽列狀態
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            const navItems = document.querySelectorAll('.nav-item');
+            const targetIndex = (tab === 'map') ? 1 : 0;
+            navItems[targetIndex]?.classList.add('active');
+            requestAnimationFrame(() => updateNavHighlight());
+
+            // 2.5 更新 FAB 顯示狀態 (地圖頁隱藏，避免擋住右下角定位)
+            updateRefreshFabVisibility();
+
+            // 3. 特殊處理：如果是地圖模式，需要 resize 並載入
+            if (tab === 'map') {
+                setTimeout(() => {
+                    initMap();
+                    map.invalidateSize(); // 修正地圖在 display:none 切換後的破圖問題
+                    centerMapToUser();
+                }, 100);
+            }
+        }
+
+        function updateRefreshFabVisibility() {
+            const fab = document.getElementById('refresh-fab');
+            if (!fab) return;
+            fab.classList.toggle('hide', currentTab !== 'home');
+        }
+
+        function updateNavHighlight() {
+            const nav = document.querySelector('.nav-bottom');
+            const active = nav?.querySelector('.nav-item.active');
+            const highlight = document.getElementById('nav-highlight');
+            if (!nav || !active || !highlight) return;
+
+            const navRect = nav.getBoundingClientRect();
+            const itemRect = active.getBoundingClientRect();
+            const horizontalInset = 10;
+            const verticalInset = 2;
+            const verticalOffset = -1;
+            const rawLeft = itemRect.left - navRect.left;
+            const rawTop = itemRect.top - navRect.top;
+            const width = Math.max(44, itemRect.width - horizontalInset * 2);
+            const maxHeight = Math.max(48, navRect.height - verticalInset * 2);
+            const height = Math.min(Math.max(itemRect.height + 18, 56), maxHeight);
+            const left = rawLeft + horizontalInset;
+            const proposedTop = rawTop + (itemRect.height - height) / 2 + verticalOffset;
+            const minTop = verticalInset;
+            const maxTop = navRect.height - height - verticalInset;
+            const top = Math.min(Math.max(proposedTop, minTop), maxTop);
+
+            highlight.style.left = `${left}px`;
+            highlight.style.top = `${top}px`;
+            highlight.style.width = `${width}px`;
+            highlight.style.height = `${height}px`;
+        }
+
+        window.togglePin = function(sno) {
+            if (pinnedIds.includes(sno)) pinnedIds = pinnedIds.filter(id => id !== sno);
+            else pinnedIds.push(sno);
+            localStorage.setItem('yb_pinned_ids', JSON.stringify(pinnedIds));
+            
+            // 即時更新所有介面
+            updateDistances();
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+    </script>
+</body>
+</html>
